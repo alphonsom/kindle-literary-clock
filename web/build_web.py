@@ -62,7 +62,8 @@ if __name__ == "__main__":
     args.dst.mkdir(parents=True, exist_ok=True)
 
     quotes = {}
-    for timestr, datasets in get_quotes(args.src).items():
+    # don't fail the whole build over one bad timestring: quote_to_html warns and shows it without bold
+    for timestr, datasets in get_quotes(args.src, fix_timestring_case=True).items():
         quotes[timestr.replace(':', '')] = [
             [quote_to_html(d['quote'], str(d['timestring'])), html.unescape(str(d['title'])),
              html.unescape(str(d['author']))]
