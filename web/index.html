@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Literary Clock">
+<title>Literary Clock</title>
+<style>
+  /* Kept to plain CSS/ES5 on purpose: the target is Safari on iOS 12 (first-gen iPad Air). */
+  @font-face { font-family: "Libertine"; src: url("fonts/LinLibertine_Rah.ttf") format("truetype"); font-weight: normal; font-style: normal; }
+  @font-face { font-family: "Libertine"; src: url("fonts/LinLibertine_RBah.ttf") format("truetype"); font-weight: bold; font-style: normal; }
+  @font-face { font-family: "Libertine"; src: url("fonts/LinLibertine_RIah.ttf") format("truetype"); font-weight: normal; font-style: italic; }
+
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+  body {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    font-family: "Libertine", Georgia, serif;
+    background: #fff; color: #808080;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    cursor: none;
+    transition: background-color 0.6s, color 0.6s;
+  }
+  #stage { position: absolute; top: 5vmin; left: 5vmin; right: 5vmin; bottom: 5vmin; }
+  #quote { line-height: 1.25; transition: opacity 0.4s; }
+  #quote .time { color: #000; font-weight: bold; }
+  #quote .sc { font-variant: small-caps; }
+  #credits {
+    position: absolute; right: 0; bottom: 0; width: 70%;
+    text-align: right; font-style: italic; color: #000;
+    font-size: 3vmin; line-height: 1.3;
+    transition: opacity 0.4s;
+  }
+  body.no-credits #credits { opacity: 0; }
+
+  body.dark { background: #000; color: #a8a8a8; }
+  body.dark #quote .time, body.dark #credits { color: #fff; }
+  /* at night the screen is still lit, so tone the text down */
+  body.dark.night { color: #5a5a5a; }
+  body.dark.night #quote .time, body.dark.night #credits { color: #9a9a9a; }
+
+  #toast {
+    position: absolute; left: 50%; top: 4vmin; transform: translateX(-50%);
+    padding: 0.4em 1em; border-radius: 1em; font-size: 2.4vmin;
+    background: rgba(128, 128, 128, 0.25); opacity: 0; transition: opacity 0.4s;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body class="dark">
+<div id="stage">
+  <div id="quote"></div>
+  <div id="credits"></div>
+</div>
+<div id="toast"></div>
+<script src="quotes.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var NIGHT_START = 22, NIGHT_END = 7;   // hours during which the dark theme is dimmed
+  var LONG_PRESS_MS = 700;
+  var CREDITS_GAP = 1.5;                  // space kept free for the credits, in credit line heights
+
+  var body = document.body;
+  var stage = document.getElementById('stage');
+  var quoteEl = document.getElementById('quote');
+  var creditsEl = document.getElementById('credits');
+  var toastEl = document.getElementById('toast');
+  var quotes = window.LITCLOCK_QUOTES || {};
+  var currentKey = null, currentTime = new Date(), timer = null, toastTimer = null;
+
+  // ---- settings (remembered per device; storage may be unavailable in private mode) ----
+  var settings = { dark: true, credits: true };
+  try {
+    var saved = JSON.parse(localStorage.getItem('litclock-settings') || '{}');
+    if (typeof saved.dark === 'boolean') settings.dark = saved.dark;
+    if (typeof saved.credits === 'boolean') settings.credits = saved.credits;
+  } catch (e) {}
+
+  function saveSettings() {
+    try { localStorage.setItem('litclock-settings', JSON.stringify(settings)); } catch (e) {}
+  }
+
+  function applySettings() {
+    body.className = (settings.dark ? 'dark' : '') + (settings.credits ? '' : ' no-credits') +
+      (isNight(currentTime) ? ' night' : '');
+  }
+
+  function isNight(now) {
+    var h = now.getHours();
+    return NIGHT_START > NIGHT_END ? (h >= NIGHT_START || h < NIGHT_END) : (h >= NIGHT_START && h < NIGHT_END);
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ---- rendering ----
+  function fitQuote() {
+    var maxWidth = stage.clientWidth;
+    var creditsHeight = creditsEl.offsetHeight;
+    var maxHeight = stage.clientHeight - (creditsHeight ? creditsHeight + CREDITS_GAP * parseFloat(getComputedStyle(creditsEl).fontSize) : 0);
+    var lo = 8, hi = 300;
+    // binary search for the largest font size at which the quote still fits
+    while (hi - lo > 0.5) {
+      var mid = (lo + hi) / 2;
+      quoteEl.style.fontSize = mid + 'px';
+      if (quoteEl.offsetHeight <= maxHeight && quoteEl.scrollWidth <= maxWidth) lo = mid; else hi = mid;
+    }
+    quoteEl.style.fontSize = lo + 'px';
+  }
+
+  function show(now) {
+    var key = pad(now.getHours()) + pad(now.getMinutes());
+    var candidates = quotes[key];
+    if (candidates && candidates.length) {
+      var q = candidates[Math.floor(Math.random() * candidates.length)];
+      quoteEl.innerHTML = q[0];   // pre-escaped by build_web.py
+      creditsEl.innerHTML = '—' + escapeHtml(q[1]) + ', ' + escapeHtml(q[2]);
+    } else {
+      // a few minutes of the day have no quote yet
+      quoteEl.innerHTML = 'It is <b class="time">' + key.slice(0, 2) + ':' + key.slice(2) + '</b>.';
+      creditsEl.innerHTML = '';
+    }
+    currentKey = key;
+    currentTime = now;
+    applySettings();
+    fitQuote();
+  }
+
+  // ?time=HH:MM pins the clock to one minute, for checking how a quote looks
+  var pinned = /[?&]time=(\d\d):?(\d\d)/.exec(location.search);
+
+  function tick() {
+    var now = new Date();
+    if (pinned) { now.setHours(+pinned[1], +pinned[2]); }
+    var key = pad(now.getHours()) + pad(now.getMinutes());
+    if (key !== currentKey) show(now);
+    // a page left open for days can pick up updated quotes once a night
+    if (key === '0330' && navigator.onLine !== false) { location.reload(); return; }
+    clearTimeout(timer);
+    timer = setTimeout(tick, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
+  }
+
+  function toast(text) {
+    toastEl.textContent = text;
+    toastEl.className = 'show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.className = ''; }, 1500);
+  }
+
+  // ---- controls: tap toggles the credits ("quiz mode"), long press toggles dark/light ----
+  function toggleCredits() {
+    settings.credits = !settings.credits;
+    saveSettings(); applySettings(); fitQuote();
+  }
+
+  function toggleTheme() {
+    settings.dark = !settings.dark;
+    saveSettings(); applySettings();
+    toast(settings.dark ? 'Dark' : 'Light');
+  }
+
+  var pressTimer = null, longPressed = false;
+  document.addEventListener('touchstart', function (e) {
+    longPressed = false;
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(function () { longPressed = true; toggleTheme(); }, LONG_PRESS_MS);
+  }, { passive: true });
+  document.addEventListener('touchmove', function (e) {
+    clearTimeout(pressTimer);
+    e.preventDefault();   // no rubber-band scrolling
+  }, { passive: false });
+  document.addEventListener('touchend', function (e) {
+    clearTimeout(pressTimer);
+    e.preventDefault();   // suppress the emulated click
+    if (!longPressed) toggleCredits();
+  }, { passive: false });
+  // mouse and keyboard, for trying it out on a computer
+  document.addEventListener('click', toggleCredits);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 't' || e.keyCode === 84) toggleTheme();
+    if (e.key === 'c' || e.keyCode === 67) toggleCredits();
+  });
+
+  window.addEventListener('resize', fitQuote);
+  window.addEventListener('orientationchange', function () { setTimeout(fitQuote, 300); });
+  // timers can stall while the page is hidden, so catch up when it comes back
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  }
+
+  tick();
+  // the web font changes the text size once it has loaded
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitQuote);
+  window.addEventListener('load', fitQuote);
+})();
+</script>
+</body>
+</html>

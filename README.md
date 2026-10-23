@@ -7,6 +7,8 @@ Use a kindle ebook-reader as literary clock:
 - press key to toggle between black and white mode
 
 
+A web version for iPads and other browsers is in [web/](web/README.md).
+
 ## Installation
 ... TODO ...
 
