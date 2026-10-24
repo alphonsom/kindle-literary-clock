@@ -74,6 +74,8 @@ def get_arguments():
     parser.add_argument('-margin', help='margin around text in pixels', type=int, default=DEFAULT_MARGIN)
     parser.add_argument('-no-convert-grayscale', help='do *not* convert the resulting image to grayscale',
                         action='store_false', dest='grayscale')
+    parser.add_argument('-no-credits', help='do *not* print title and author on the main image '
+                        '(they are then only shown in quiz mode)', action='store_false', dest='credits')
     parser.add_argument('--statistics', help='collect and show statistics', action='store_true')
 
     parser.add_argument('-start-time', help='optional time to start', type=str, default="00:00")
@@ -140,6 +142,8 @@ class Quote2Image:
         self.layout.width = units_from_double(self.width - 2 * self.margin)
 
         self.quote = re.sub("<br\\s*(/)?>", '\n', self.quote)
+        # escape '&' unless it already starts an entity like &amp; (pango markup would choke on it)
+        self.quote = re.sub(r'&(?!#?\w+;)', '&amp;', self.quote)
         self.quote_len = len(quote)
         self.quote = self.quote.replace(timestr, f"<span foreground='{self.color_theme.time_color}' "
                                                  f"font_desc='{self.color_theme.time_font}'>{timestr}</span>", 1)
@@ -220,8 +224,9 @@ class Quote2Image:
                 f"{font_size}'>{quote}</span>")
 
     def add_annotations(self, title, author):
-        title = html.escape(title)
-        author = html.escape(author)
+        # unescape first so titles already written as '&amp;' don't show up literally
+        title = html.escape(html.unescape(title))
+        author = html.escape(html.unescape(author))
 
         context = cairocffi.Context(self.surface)
 
@@ -320,12 +325,16 @@ if __name__ == "__main__":
             q2i = Quote2Image(args['width'], args['height'], args['color_theme'])
 
             q2i.add_quote(data['quote'], data['timestring'])
+            if args['credits']:
+                # show title and author on every image, not only in quiz mode
+                q2i.add_annotations(data['title'], data['author'])
             filename = dst / f'{basename}.png'
             q2i.surface.write_to_png(str(filename))
             if args['grayscale']:
                 rgb2gray(filename)
 
-            q2i.add_annotations(data['title'], data['author'])
+            if not args['credits']:
+                q2i.add_annotations(data['title'], data['author'])
             filename = meta_dst / f'{basename}_credits.png'
             q2i.surface.write_to_png(str(filename))
             if args['grayscale']:
